@@ -1,0 +1,182 @@
+import os
+import shutil
+import time
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from datetime import datetime
+import pystray
+from PIL import Image, ImageDraw
+
+LOG_FILE = "log.txt"
+
+def log(message):
+    """Записывает сообщение в лог с меткой времени"""
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+
+class FileMoverApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("File Mover")
+        self.root.geometry("420x320")
+        self.root.resizable(False, False)
+
+        # Переменные
+        self.source_path = tk.StringVar()
+        self.dest_path = tk.StringVar()
+        self.running = False
+        self.tray_icon = None
+
+        # Интерфейс
+        tk.Label(root, text="Папка-источник:").pack(pady=5)
+        tk.Entry(root, textvariable=self.source_path, width=45).pack()
+        tk.Button(root, text="Выбрать...", command=self.choose_source).pack()
+
+        tk.Label(root, text="Папка-назначение:").pack(pady=5)
+        tk.Entry(root, textvariable=self.dest_path, width=45).pack()
+        tk.Button(root, text="Выбрать...", command=self.choose_dest).pack()
+
+        self.start_btn = tk.Button(root, text="▶ Запустить", command=self.start)
+        self.start_btn.pack(pady=5)
+
+        self.stop_btn = tk.Button(root, text="■ Остановить", command=self.stop, state=tk.DISABLED)
+        self.stop_btn.pack()
+
+        tk.Button(root, text="❓ FAQ", command=self.show_faq).pack(pady=5)
+
+        # Статус
+        self.status_label = tk.Label(root, text="Статус: Остановлено", fg="red")
+        self.status_label.pack(side=tk.BOTTOM, pady=10)
+
+        # Перехват закрытия окна
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
+
+    def choose_source(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.source_path.set(folder)
+
+    def choose_dest(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.dest_path.set(folder)
+
+    def check_path_access(self, path, write=False):
+        """Проверяем существование и права доступа"""
+        if not os.path.isdir(path):
+            return False, "Путь не существует"
+        if not os.access(path, os.R_OK):
+            return False, "Нет прав на чтение"
+        if write and not os.access(path, os.W_OK):
+            return False, "Нет прав на запись"
+        return True, ""
+
+    def move_files(self):
+        while self.running:
+            src = self.source_path.get()
+            dst = self.dest_path.get()
+
+            ok_src, err_src = self.check_path_access(src)
+            ok_dst, err_dst = self.check_path_access(dst, write=True)
+
+            if not ok_src:
+                messagebox.showerror("Ошибка", f"Источник: {err_src}")
+                log(f"ОШИБКА: Источник - {err_src}")
+                self.stop()
+                return
+            if not ok_dst:
+                messagebox.showerror("Ошибка", f"Назначение: {err_dst}")
+                log(f"ОШИБКА: Назначение - {err_dst}")
+                self.stop()
+                return
+
+            for filename in os.listdir(src):
+                src_file = os.path.join(src, filename)
+                dst_file = os.path.join(dst, filename)
+
+                if os.path.isfile(src_file) and not os.path.exists(dst_file):
+                    try:
+                        shutil.move(src_file, dst_file)
+                        log(f"Перемещён файл: {src_file} → {dst_file}")
+                    except Exception as e:
+                        error_msg = f"Не удалось переместить {filename}: {e}"
+                        messagebox.showerror("Ошибка", error_msg)
+                        log(f"ОШИБКА: {error_msg}")
+
+            log("Ожидание следующего часа...")
+            for _ in range(3600):
+                if not self.running:
+                    break
+                time.sleep(1)
+
+    def start(self):
+        if not self.source_path.get() or not self.dest_path.get():
+            messagebox.showwarning("Ошибка", "Укажите обе папки!")
+            return
+
+        self.running = True
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.status_label.config(text="Статус: Запущено", fg="green")
+
+        log("=== Программа запущена ===")
+        threading.Thread(target=self.move_files, daemon=True).start()
+
+    def stop(self):
+        self.running = False
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.status_label.config(text="Статус: Остановлено", fg="red")
+        log("=== Программа остановлена ===")
+
+    def show_faq(self):
+        faq_text = (
+            "📄 Инструкция по использованию:\n\n"
+            "1. Укажите папку-источник (где появляются новые файлы).\n"
+            "2. Укажите папку-назначение (куда перемещать файлы).\n"
+            "3. Нажмите 'Запустить' — программа каждые 60 минут\n"
+            "   будет перемещать новые файлы.\n"
+            "4. При ошибках доступности пути или прав программа\n"
+            "   остановится.\n"
+            "5. Для работы в фоне сверните окно в трей.\n\n"
+            "💡 Логи сохраняются в файл log.txt."
+        )
+        messagebox.showinfo("FAQ", faq_text)
+
+    def hide_window(self):
+        """Сворачиваем в трей"""
+        self.root.withdraw()
+        if not self.tray_icon:
+            image = self.create_icon()
+            menu = pystray.Menu(
+                pystray.MenuItem("Открыть", self.show_window),
+                pystray.MenuItem("Остановить", self.stop),
+                pystray.MenuItem("Выход", self.exit_app)
+            )
+            self.tray_icon = pystray.Icon("FileMover", image, "File Mover", menu)
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def show_window(self, icon=None, item=None):
+        self.root.deiconify()
+        if self.tray_icon:
+            self.tray_icon.stop()
+            self.tray_icon = None
+
+    def create_icon(self):
+        """Создаём простую иконку для трея"""
+        image = Image.new("RGB", (64, 64), "blue")
+        d = ImageDraw.Draw(image)
+        d.rectangle([16, 16, 48, 48], fill="white")
+        return image
+
+    def exit_app(self, icon=None, item=None):
+        self.stop()
+        if self.tray_icon:
+            self.tray_icon.stop()
+        self.root.destroy()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FileMoverApp(root)
+    root.mainloop()
