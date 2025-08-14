@@ -1,0 +1,114 @@
+import os
+import shutil
+import time
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+class FileMoverApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("File Mover")
+        self.root.geometry("420x270")
+        self.root.resizable(False, False)
+
+        # Переменные
+        self.source_path = tk.StringVar()
+        self.dest_path = tk.StringVar()
+        self.running = False
+
+        # Интерфейс
+        tk.Label(root, text="Папка-источник:").pack(pady=5)
+        tk.Entry(root, textvariable=self.source_path, width=45).pack()
+        tk.Button(root, text="Выбрать...", command=self.choose_source).pack()
+
+        tk.Label(root, text="Папка-назначение:").pack(pady=5)
+        tk.Entry(root, textvariable=self.dest_path, width=45).pack()
+        tk.Button(root, text="Выбрать...", command=self.choose_dest).pack()
+
+        self.start_btn = tk.Button(root, text="▶ Запустить", command=self.start)
+        self.start_btn.pack(pady=10)
+
+        self.stop_btn = tk.Button(root, text="■ Остановить", command=self.stop, state=tk.DISABLED)
+        self.stop_btn.pack()
+
+        # Статус
+        self.status_label = tk.Label(root, text="Статус: Остановлено", fg="red")
+        self.status_label.pack(side=tk.BOTTOM, pady=10)
+
+    def choose_source(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.source_path.set(folder)
+
+    def choose_dest(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.dest_path.set(folder)
+
+    def check_path_access(self, path, write=False):
+        """Проверяем существование и права доступа"""
+        if not os.path.isdir(path):
+            return False, "Путь не существует"
+        if not os.access(path, os.R_OK):
+            return False, "Нет прав на чтение"
+        if write and not os.access(path, os.W_OK):
+            return False, "Нет прав на запись"
+        return True, ""
+
+    def move_files(self):
+        while self.running:
+            src = self.source_path.get()
+            dst = self.dest_path.get()
+
+            ok_src, err_src = self.check_path_access(src)
+            ok_dst, err_dst = self.check_path_access(dst, write=True)
+
+            if not ok_src:
+                messagebox.showerror("Ошибка", f"Источник: {err_src}")
+                self.stop()
+                return
+            if not ok_dst:
+                messagebox.showerror("Ошибка", f"Назначение: {err_dst}")
+                self.stop()
+                return
+
+            for filename in os.listdir(src):
+                src_file = os.path.join(src, filename)
+                dst_file = os.path.join(dst, filename)
+
+                if os.path.isfile(src_file) and not os.path.exists(dst_file):
+                    try:
+                        shutil.move(src_file, dst_file)
+                    except Exception as e:
+                        messagebox.showerror("Ошибка", f"Не удалось переместить {filename}: {e}")
+
+            # Ждём 1 час
+            for _ in range(3600):
+                if not self.running:
+                    break
+                time.sleep(1)
+
+    def start(self):
+        if not self.source_path.get() or not self.dest_path.get():
+            messagebox.showwarning("Ошибка", "Укажите обе папки!")
+            return
+
+        self.running = True
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.status_label.config(text="Статус: Запущено", fg="green")
+
+        threading.Thread(target=self.move_files, daemon=True).start()
+
+    def stop(self):
+        self.running = False
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.status_label.config(text="Статус: Остановлено", fg="red")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FileMoverApp(root)
+    root.mainloop()
