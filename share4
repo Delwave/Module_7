@@ -1,0 +1,130 @@
+import os
+import shutil
+import threading
+import time
+from datetime import datetime
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import pystray
+from PIL import Image, ImageDraw
+
+
+class FileMoverApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("FileMover")
+        self.root.geometry("400x300")
+        self.root.resizable(False, False)
+
+        # Переменные
+        self.source_folder = tk.StringVar()
+        self.dest_folder = tk.StringVar()
+        self.running = False
+        self.delete_after = tk.BooleanVar()
+        self.start_time = ""
+        self.interval_choice = tk.StringVar(value="1 час")
+
+        # Интерфейс
+        self.create_widgets()
+
+    def create_widgets(self):
+        tk.Label(self.root, text="Источник:").pack(pady=2)
+        tk.Entry(self.root, textvariable=self.source_folder, width=40).pack()
+        tk.Button(self.root, text="Выбрать", command=lambda: self.select_folder(self.source_folder)).pack(pady=3)
+
+        tk.Label(self.root, text="Назначение:").pack(pady=2)
+        tk.Entry(self.root, textvariable=self.dest_folder, width=40).pack()
+        tk.Button(self.root, text="Выбрать", command=lambda: self.select_folder(self.dest_folder)).pack(pady=3)
+
+        tk.Label(self.root, text="Интервал перемещения:").pack(pady=2)
+        ttk.Combobox(self.root, textvariable=self.interval_choice, values=["1 час", "1 сутки", "1 неделя"], state="readonly").pack()
+
+        tk.Checkbutton(self.root, text="Удалять файлы после перемещения", variable=self.delete_after).pack(pady=5)
+
+        self.start_btn = tk.Button(self.root, text="Запустить", command=self.start)
+        self.start_btn.pack(pady=5)
+
+        self.stop_btn = tk.Button(self.root, text="Остановить", command=self.stop, state="disabled")
+        self.stop_btn.pack(pady=5)
+
+        self.status_label = tk.Label(self.root, text="", fg="green")
+        self.status_label.pack(pady=10)
+
+    def select_folder(self, var):
+        folder = filedialog.askdirectory()
+        if folder:
+            var.set(folder)
+
+    def start(self):
+        if not os.path.exists(self.source_folder.get()):
+            messagebox.showerror("Ошибка", "Путь источника недоступен или не существует.")
+            return
+        if not os.path.exists(self.dest_folder.get()):
+            messagebox.showerror("Ошибка", "Путь назначения недоступен или не существует.")
+            return
+
+        self.running = True
+        self.start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.status_label.config(text=f"Запущено: {self.start_time}")
+        self.start_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+
+        threading.Thread(target=self.run_task, daemon=True).start()
+        self.minimize_to_tray()
+
+    def stop(self):
+        self.running = False
+        self.start_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+        self.status_label.config(text="Остановлено")
+
+    def run_task(self):
+        while self.running:
+            self.move_files()
+            time.sleep(self.get_interval_seconds())
+
+    def move_files(self):
+        for filename in os.listdir(self.source_folder.get()):
+            src_path = os.path.join(self.source_folder.get(), filename)
+            dst_path = os.path.join(self.dest_folder.get(), filename)
+            if os.path.isfile(src_path):
+                if not os.path.exists(dst_path):
+                    shutil.copy2(src_path, dst_path)  # Копирование
+                    if self.delete_after.get():
+                        os.remove(src_path)
+
+    def get_interval_seconds(self):
+        if self.interval_choice.get() == "1 час":
+            return 3600
+        elif self.interval_choice.get() == "1 сутки":
+            return 86400
+        elif self.interval_choice.get() == "1 неделя":
+            return 604800
+        return 3600
+
+    def minimize_to_tray(self):
+        self.root.withdraw()
+
+        image = Image.new('RGB', (64, 64), "blue")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 64, 64), fill="blue")
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Открыть", self.show_window),
+            pystray.MenuItem("Выход", self.exit_app)
+        )
+        icon = pystray.Icon("FileMover", image, "FileMover", menu)
+        threading.Thread(target=icon.run, daemon=True).start()
+
+    def show_window(self, icon=None, item=None):
+        self.root.deiconify()
+
+    def exit_app(self, icon=None, item=None):
+        self.running = False
+        self.root.quit()
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FileMoverApp(root)
+    root.mainloop()
