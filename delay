@@ -1,0 +1,48 @@
+import os
+import time
+import shutil
+
+# === НАСТРОЙКИ ===
+SOURCE_DIR = r"C:\Users\YourName\Desktop\source"   # папка-источник
+TARGET_DIR = r"C:\Users\YourName\Desktop\target"   # папка-назначение
+PREFIX = "GR_8_"                                   # префикс искомых файлов
+CHECK_INTERVAL = 2                                 # задержка между проверками (секунды)
+
+
+def is_file_ready(filepath):
+    """Проверяем, можно ли прочитать файл (значит он догрузился)."""
+    try:
+        with open(filepath, "rb"):
+            return True
+    except (PermissionError, OSError):
+        return False
+
+
+def main():
+    print("🚀 Программа запущена. Ожидание файлов...")
+    while True:
+        try:
+            for filename in os.listdir(SOURCE_DIR):
+                if filename.startswith(PREFIX):
+                    source_path = os.path.join(SOURCE_DIR, filename)
+                    target_path = os.path.join(TARGET_DIR, filename)
+
+                    if is_file_ready(source_path):
+                        try:
+                            shutil.move(source_path, target_path)
+                            print(f"✅ Файл {filename} перемещён")
+                        except Exception as e:
+                            print(f"❌ Ошибка при перемещении {filename}: {e}")
+                    else:
+                        print(f"⏳ Файл {filename} еще загружается...")
+            time.sleep(CHECK_INTERVAL)
+        except KeyboardInterrupt:
+            print("\n🛑 Работа программы остановлена пользователем.")
+            break
+        except Exception as e:
+            print(f"⚠️ Ошибка: {e}")
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()
